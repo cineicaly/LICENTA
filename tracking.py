@@ -1,11 +1,11 @@
-import cv2
-import numpy as np
 
 from engine.object_detection import ObjectDetection
 from engine.object_tracking import MultiObjectTracking
 import cv2
 import numpy as np
 import os
+import time
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 def getVideoInfo(path):
@@ -16,7 +16,7 @@ od = ObjectDetection("dnn_model/yolov8m.pt")
 od.load_class_names("dnn_model/classes.txt")
 
 # 2. Videocapture
-cap = cv2.VideoCapture("demo/cars_highway.mp4")
+cap = cv2.VideoCapture("cars_highway.mp4")
 
 # 3. Load tracker
 mot = MultiObjectTracking()
@@ -28,6 +28,32 @@ crossing_area_2 = np.array([(1179, 349), (1275, 341), (1275, 402), (1155, 438)])
 vehicles_ids1 = set()
 vehicles_ids2 = set()
 trajectory_by_id = {}
+speed_by_id = {}
+
+# Source and destination points for perspective transform
+src_points = np.float32([(617, 393), (964, 389), (926, 498), (477, 485)])
+dst_points = np.float32([(0, 0), (500, 0), (500, 500), (0, 500)])
+
+# Calculate the perspective transform matrix
+M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+# Distance conversion factor (pixels to meters)
+# This needs to be calculated based on the real-world size of the destination points
+pixel_to_meter = 1 / 10  # Example: 10 pixels = 1 meter
+
+# Function to calculate speed
+def calculate_speed(trajectory, fps):
+    if len(trajectory) < 2:
+        return 0
+    p1 = trajectory[-2]
+    p2 = trajectory[-1]
+    p1_trans = cv2.perspectiveTransform(np.array([[p1]], dtype='float32'), M)[0][0]
+    p2_trans = cv2.perspectiveTransform(np.array([[p2]], dtype='float32'), M)[0][0]
+    distance = np.linalg.norm(p2_trans - p1_trans) * pixel_to_meter
+    speed = distance * fps * 3.6  # Convert m/s to km/h
+    return speed
+
+fps = cap.get(cv2.CAP_PROP_FPS)
 
 while True:
     ret, frame = cap.read()
@@ -54,12 +80,17 @@ while True:
 
         if object_id not in trajectory_by_id:
             trajectory_by_id[object_id] = [(cx, cy)]
+            speed_by_id[object_id] = 0
         else:
             trajectory_by_id[object_id].append((cx, cy))
 
             # Draw Trajectory
             trajectory = trajectory_by_id[object_id]
             cv2.polylines(frame, [np.array(trajectory[-20:])], False, (15, 225, 215), 2)
+
+            # Calculate Speed
+            speed = calculate_speed(trajectory, fps)
+            speed_by_id[object_id] = speed
 
         is_inside1 = cv2.pointPolygonTest(crossing_area_1, (cx, cy), False)
         is_inside2 = cv2.pointPolygonTest(crossing_area_2, (cx, cy), False)
@@ -69,7 +100,9 @@ while True:
         elif is_inside2 > 0:
             vehicles_ids2.add(object_id)
 
-
+        # Display speed
+        cv2.putText(frame, "{:.2f} km/h".format(speed_by_id[object_id]), (cx, cy + 20), cv2.FONT_HERSHEY_PLAIN,
+                    1.4, (0, 255, 0), 2)
 
     cv2.putText(frame, "VEHICLES AREA 1: {}".format(len(vehicles_ids1)), (600, 50), cv2.FONT_HERSHEY_PLAIN,
                 1.5, (15, 225, 215), 2)
