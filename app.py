@@ -1,5 +1,4 @@
 import wx
-from tracking import *
 import cv2
 
 
@@ -36,8 +35,6 @@ class Example(wx.Frame):
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return
             path_to_video = fileDialog.GetPath()
-            _, fps = getVideoInfo(path_to_video)
-            print(int(round(fps)))
             cam = cv2.VideoCapture(path_to_video)
             ret, frame = cam.read()
 
@@ -57,18 +54,30 @@ class Example(wx.Frame):
 
     def ChooseCoordinates(self, cam):
         coordinates = []
-        while len(coordinates) < 3:
+        while len(coordinates) < 4:
             ret, frame = cam.read()
-            cv2.imshow('frame', frame)
+            frame_copy = frame.copy()
+            for i, coord in enumerate(coordinates):
+                cv2.circle(frame_copy, coord, 5, (0, 255, 0), -1)
+                if i > 0:
+                    cv2.line(frame_copy, coordinates[i - 1], coord, (0, 255, 0), 2)
+            if len(coordinates) == 4:
+                cv2.line(frame_copy, coordinates[0], coordinates[3], (0, 255, 0), 2)
+                cv2.line(frame_copy, coordinates[2], coordinates[3], (0, 255, 0), 2)
+                cv2.line(frame_copy, coordinates[0], coordinates[1], (0, 255, 0), 2)
+            cv2.imshow('frame', frame_copy)
             cv2.setMouseCallback('frame', self.OnClick, coordinates)
-            cv2.waitKey(0)
+            cv2.waitKey(1)
         cv2.destroyAllWindows()
         print("Coordinates:", coordinates)
 
     def OnClick(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             coordinates = param
-            coordinates.append((x, y))
+            if len(coordinates) == 3:
+                coordinates.append((x, y))
+            else:
+                coordinates[-1] = (x, y)
 
 
 def main():
