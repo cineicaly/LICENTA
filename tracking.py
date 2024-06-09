@@ -3,7 +3,7 @@ from engine.object_tracking import MultiObjectTracking
 import cv2
 import numpy as np
 import os
-import time
+import time  # Import the time module
 from collections import defaultdict, deque
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -24,7 +24,9 @@ crossing_area_1 = np.array([(1252, 787), (2298, 803), (5039, 2159), (-550, 2159)
 
 vehicles_ids1 = set()
 
+# Deques to store coordinates and times for each vehicle
 trajectory_by_id = defaultdict(lambda: deque(maxlen=30))
+time_by_id = defaultdict(lambda: deque(maxlen=30))
 speed_by_id = {}
 
 # Source and destination points for perspective transform
@@ -59,6 +61,7 @@ class ViewTransformer:
 view_transformer = ViewTransformer(source=SOURCE, target=TARGET)
 
 fps = cap.get(cv2.CAP_PROP_FPS)
+min_frames_between_calculations = int(fps / 2)  # Minimum half a second apart
 
 while True:
     ret, frame = cap.read()
@@ -76,8 +79,8 @@ while True:
         cy = int((y + y2) / 2)
 
         # draw bounding box
-        # cv2.rectangle(frame, (x, y), (x2, y2), od.colors[class_id], 2)
-        cv2.circle(frame, (cx, cy), 5, od.colors[class_id], -1)
+        cv2.rectangle(frame, (x, y), (x2, y2), od.colors[class_id], 2)
+        # cv2.circle(frame, (cx, cy), 5, od.colors[class_id], -1)
 
         # Object id
         cv2.putText(frame, "{}".format(object_id), (cx, cy - 10), cv2.FONT_HERSHEY_PLAIN,
@@ -85,23 +88,22 @@ while True:
 
         if object_id not in trajectory_by_id:
             trajectory_by_id[object_id] = deque(maxlen=30)
+            time_by_id[object_id] = deque(maxlen=30)
             speed_by_id[object_id] = 0
         else:
             trajectory_by_id[object_id].append((cx, cy))
+            time_by_id[object_id].append(time.time())
 
-            # Calculate Speed
-            transformed_points = view_transformer.transform_points(np.array(trajectory_by_id[object_id]))
-            if len(transformed_points) >= 2:
-                p1_trans = transformed_points[-2]
-                p2_trans = transformed_points[-1]
-                distance = np.linalg.norm(p2_trans - p1_trans)
-                time = 1 / fps
-                speed = distance / time * 3.6  # Convert m/s to km/h
-                speed_by_id[object_id] = speed
-
-            # Draw Trajectory
-            trajectory = trajectory_by_id[object_id]
-            cv2.polylines(frame, [np.array(trajectory)], False, (15, 225, 215), 2)
+            # Calculate Speed only if there are enough frames and they are spaced apart
+            if len(trajectory_by_id[object_id]) >= 2:
+                time_diff = time_by_id[object_id][-1] - time_by_id[object_id][0]
+                if time_diff >= 0.5:  # Only consider calculations if at least half a second has passed
+                    transformed_points = view_transformer.transform_points(np.array(trajectory_by_id[object_id]))
+                    p1_trans = transformed_points[0]
+                    p2_trans = transformed_points[-1]
+                    distance = np.linalg.norm(p2_trans - p1_trans)
+                    speed = distance / time_diff * 3.6  # Convert m/s to km/h
+                    speed_by_id[object_id] = speed
 
         is_inside1 = cv2.pointPolygonTest(crossing_area_1, (cx, cy), False)
         # If the object is inside the crossing area
