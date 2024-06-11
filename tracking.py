@@ -40,7 +40,7 @@ def get_color_for_tracker_id(tracker_id):
     np.random.seed(tracker_id)
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
-def start_tracking(coordinates, real_life_coords, video_path):
+def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas):
     SOURCE = np.array(coordinates)
 
     # Calculate TARGET_WIDTH and TARGET_HEIGHT from real_life_coords
@@ -68,6 +68,9 @@ def start_tracking(coordinates, real_life_coords, video_path):
 
     coordinates_by_id = defaultdict(lambda: deque(maxlen=int(fps)))
 
+    detection_polygon = np.array(detection_area, dtype=np.int32)
+    additional_polygons = [np.array(area, dtype=np.int32) for area in additional_areas]
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -78,53 +81,58 @@ def start_tracking(coordinates, real_life_coords, video_path):
 
         for bbox_id in bboxes_ids:
             (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
-            cx = int((x + x2) / 2)
-            cy = int((y + y2) / 2)
+
+            # Calculate the center of the bottom bounding box side
+            bottom_center_x = int((x + x2) / 2)
+            bottom_center_y = y2
 
             if object_id not in ema_coords:
-                ema_coords[object_id] = (cx, cy)
+                ema_coords[object_id] = (bottom_center_x, bottom_center_y)
             else:
-                prev_cx, prev_cy = ema_coords[object_id]
-                cx = alpha * cx + (1 - alpha) * prev_cx
-                cy = alpha * cy + (1 - alpha) * prev_cy
-                ema_coords[object_id] = (cx, cy)
+                prev_x, prev_y = ema_coords[object_id]
+                bottom_center_x = int(alpha * bottom_center_x + (1 - alpha) * prev_x)
+                bottom_center_y = int(alpha * bottom_center_y + (1 - alpha) * prev_y)
+                ema_coords[object_id] = (bottom_center_x, bottom_center_y)
 
-            is_inside1 = cv2.pointPolygonTest(SOURCE, (cx, cy), False)
-            if is_inside1 <= 0:
-                continue
+            is_inside_detection = cv2.pointPolygonTest(detection_polygon, (bottom_center_x, bottom_center_y), False)
+            is_inside_perspective = cv2.pointPolygonTest(SOURCE, (bottom_center_x, bottom_center_y), False)
 
-            color = get_color_for_tracker_id(object_id)
+            if is_inside_detection > 0 and is_inside_perspective > 0:
+                color = get_color_for_tracker_id(object_id)
 
-            cv2.rectangle(frame, (x, y), (x2, y2), color, 1)
+                cv2.rectangle(frame, (x, y), (x2, y2), color, 1)
 
-            class_name = od.classes[class_id]
-            label = "{} {:.2f} km/h".format(class_name, speed_by_id.get(object_id, 0))
-            (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 3, 2)
+                class_name = od.classes[class_id]
+                label = "{} {:.2f} km/h".format(class_name, speed_by_id.get(object_id, 0))
+                (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 3, 2)
 
-            cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
-            cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 3, (255, 255, 255), 2)
+                cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
+                cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 3, (255, 255, 255), 2)
 
-            if object_id not in coordinates_by_id:
-                coordinates_by_id[object_id] = deque(maxlen=int(fps))
-            else:
-                coordinates_by_id[object_id].append((cx, cy))
+                if object_id not in coordinates_by_id:
+                    coordinates_by_id[object_id] = deque(maxlen=int(fps))
+                else:
+                    coordinates_by_id[object_id].append((bottom_center_x, bottom_center_y))
 
-                if len(coordinates_by_id[object_id]) > fps * (3 / 4):
-                    start_point = coordinates_by_id[object_id][0]
-                    end_point = coordinates_by_id[object_id][-1]
-                    transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
-                    transformed_end = view_transformer.transform_points(np.array([end_point]))[0]
-                    distance = np.linalg.norm(transformed_end - transformed_start)
-                    time_elapsed = len(coordinates_by_id[object_id]) / fps
-                    speed = (distance / time_elapsed) * 3.6
-                    speed_by_id[object_id] = speed
+                    if len(coordinates_by_id[object_id]) > fps * (3 / 4):
+                        start_point = coordinates_by_id[object_id][0]
+                        end_point = coordinates_by_id[object_id][-1]
+                        transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
+                        transformed_end = view_transformer.transform_points(np.array([end_point]))[0]
+                        distance = np.linalg.norm(transformed_end - transformed_start)
+                        time_elapsed = len(coordinates_by_id[object_id]) / fps
+                        speed = (distance / time_elapsed) * 3.6
+                        speed_by_id[object_id] = speed
 
-            vehicles_ids1.add(object_id)
+                vehicles_ids1.add(object_id)
 
         cv2.putText(frame, "VEHICLES AREA 1: {}".format(len(vehicles_ids1)), (600, 50), cv2.FONT_HERSHEY_PLAIN,
                     1.5, (15, 225, 215), 2)
 
-        cv2.polylines(frame, [SOURCE], True, (0, 0, 225), 4)
+        cv2.polylines(frame, [detection_polygon], True, (0, 0, 225), 4)
+
+        for area in additional_polygons:
+            cv2.polylines(frame, [area], True, (0, 255, 0), 2)
 
         cv2.namedWindow('tracker_frame', cv2.WINDOW_NORMAL)
         cv2.imshow("tracker_frame", frame)
