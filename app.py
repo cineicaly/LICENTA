@@ -18,7 +18,7 @@ class Example(wx.Frame):
         self.scaled_frame = None
         self.scale_factor_x = 1
         self.scale_factor_y = 1
-        self.static_bitmap = None  # Initialize static_bitmap
+        self.static_bitmap = None
 
     def InitApp(self):
         panel = wx.Panel(self)
@@ -57,7 +57,7 @@ class Example(wx.Frame):
         self.Maximize(True)
         self.SetTitle("Object Tracking Application")
 
-        self.Bind(wx.EVT_SIZE, self.OnResize)  # Handle window resizing
+        self.Bind(wx.EVT_SIZE, self.OnResize)
 
     def OnQuit(self, event):
         self.Close()
@@ -101,19 +101,11 @@ class Example(wx.Frame):
         self.scale_factor_x = width / new_width
         self.scale_factor_y = height / new_height
 
-        image = cv2.cvtColor(self.scaled_frame, cv2.COLOR_BGR2RGB)
-        self.bitmap = wx.Bitmap.FromBuffer(new_width, new_height, image)
-
-        if self.static_bitmap is None:
-            self.static_bitmap = wx.StaticBitmap(self.panel, -1, self.bitmap, pos=(10, 60))
-        else:
-            self.static_bitmap.SetBitmap(self.bitmap)
-        self.panel.Refresh()
-        self.panel.Update()
+        self.DrawAreas()
 
     def OnResize(self, event):
-        self.AdjustVideoSize()  # Adjust video size on window resize
-        event.Skip()  # Ensure the event is processed further
+        self.AdjustVideoSize()
+        event.Skip()
 
     def ShowFrame(self, mode):
         if self.frame is None:
@@ -168,6 +160,8 @@ class Example(wx.Frame):
                 static_bitmap.Unbind(wx.EVT_LEFT_DOWN)
                 window.Close()
 
+        self.AdjustVideoSize()
+
     def DrawOnBitmap(self, static_bitmap, mode):
         width, height = self.scaled_frame.shape[1], self.scaled_frame.shape[0]
         image = cv2.cvtColor(self.scaled_frame, cv2.COLOR_BGR2RGB)
@@ -214,6 +208,63 @@ class Example(wx.Frame):
         dc.SelectObject(wx.NullBitmap)
         static_bitmap.SetBitmap(bitmap)
         static_bitmap.Refresh()
+
+    def DrawAreas(self):
+        if self.scaled_frame is None:
+            return
+
+        frame_copy = self.scaled_frame.copy()
+        height, width = frame_copy.shape[:2]
+        image = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2RGB)
+        bitmap = wx.Bitmap.FromBuffer(width, height, image)
+        dc = wx.MemoryDC(bitmap)
+        gc = wx.GraphicsContext.Create(dc)
+
+        # Draw perspective transform area
+        if len(self.coordinates) == 4:
+            gc.SetPen(wx.Pen(wx.Colour(0, 255, 0), 2))
+            for i, coord in enumerate(self.coordinates):
+                scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
+                if i > 0:
+                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x), int(self.coordinates[i - 1][1] / self.scale_factor_y))
+                    gc.StrokeLine(*scaled_prev, *scaled_coord)
+            scaled_first = (int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
+            scaled_last = (int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
+            gc.StrokeLine(*scaled_first, *scaled_last)
+
+        # Draw detection area
+        if len(self.detection_area) == 4:
+            gc.SetPen(wx.Pen(wx.Colour(0, 0, 255), 2))
+            for i, coord in enumerate(self.detection_area):
+                scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
+                if i > 0:
+                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x), int(self.detection_area[i - 1][1] / self.scale_factor_y))
+                    gc.StrokeLine(*scaled_prev, *scaled_coord)
+            scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
+            scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
+            gc.StrokeLine(*scaled_first, *scaled_last)
+
+        # Draw additional areas
+        gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
+        for area in self.additional_areas:
+            if len(area) == 4:
+                for i, coord in enumerate(area):
+                    scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
+                    if i > 0:
+                        scaled_prev = (int(area[i - 1][0] / self.scale_factor_x), int(area[i - 1][1] / self.scale_factor_y))
+                        gc.StrokeLine(*scaled_prev, *scaled_coord)
+                scaled_first = (int(area[0][0] / self.scale_factor_x), int(area[0][1] / self.scale_factor_y))
+                scaled_last = (int(area[3][0] / self.scale_factor_x), int(area[3][1] / self.scale_factor_y))
+                gc.StrokeLine(*scaled_first, *scaled_last)
+
+        dc.SelectObject(wx.NullBitmap)
+        self.bitmap = bitmap
+
+        if self.static_bitmap is None:
+            self.static_bitmap = wx.StaticBitmap(self.panel, -1, self.bitmap, pos=(10, 60))
+        else:
+            self.static_bitmap.SetBitmap(self.bitmap)
+        self.panel.Refresh()
 
     def OnSelectCoords(self, event):
         if self.frame is not None:
