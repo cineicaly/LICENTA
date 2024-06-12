@@ -4,6 +4,7 @@ import json
 import os
 from tracking import start_tracking
 
+
 class Example(wx.Frame):
 
     def __init__(self, *args, **kwargs):
@@ -19,6 +20,8 @@ class Example(wx.Frame):
         self.scale_factor_x = 1
         self.scale_factor_y = 1
         self.static_bitmap = None
+        self.img_size = 1280  # Default image size
+        self.confidence = 0.5  # Default confidence
 
     def InitApp(self):
         panel = wx.Panel(self)
@@ -30,14 +33,24 @@ class Example(wx.Frame):
         selectCoordsButton = wx.Button(panel, label='Select Coordinates', pos=(160, 10), size=button_size)
         selectDetectionAreaButton = wx.Button(panel, label='Select Detection Area', pos=(310, 10), size=button_size)
         addAdditionalAreaButton = wx.Button(panel, label='Add Additional Area', pos=(460, 10), size=button_size)
-        loadCoordsButton = wx.Button(panel, label='Load Coordinates', pos=(610, 10), size=button_size)
-        startTrackingButton = wx.Button(panel, label='Start Tracking', pos=(760, 10), size=button_size)
-        quitButton = wx.Button(panel, label='Quit', pos=(910, 10), size=button_size)
+        saveAreasButton = wx.Button(panel, label='Save Areas', pos=(610, 10), size=button_size)
+        loadCoordsButton = wx.Button(panel, label='Load File', pos=(760, 10), size=button_size)
+        startTrackingButton = wx.Button(panel, label='Start Tracking', pos=(910, 10), size=button_size)
+        quitButton = wx.Button(panel, label='Quit', pos=(1060, 10), size=button_size)
+
+        imgSizeLabel = wx.StaticText(panel, label="Image Size:", pos=(1210, 15))
+        self.imgSizeChoice = wx.Choice(panel, choices=["320", "640", "1280"], pos=(1280, 10), size=(70, 30))
+        self.imgSizeChoice.SetSelection(2)  # Default to 1280
+
+        confLabel = wx.StaticText(panel, label="Confidence:", pos=(1360, 15))
+        self.confChoice = wx.Choice(panel, choices=["0.3", "0.5", "0.7"], pos=(1440, 10), size=(70, 30))
+        self.confChoice.SetSelection(1)  # Default to 0.5
 
         openVideoButton.Bind(wx.EVT_BUTTON, self.OnOpen)
         selectCoordsButton.Bind(wx.EVT_BUTTON, self.OnSelectCoords)
         selectDetectionAreaButton.Bind(wx.EVT_BUTTON, self.OnSelectDetectionArea)
         addAdditionalAreaButton.Bind(wx.EVT_BUTTON, self.OnAddAdditionalArea)
+        saveAreasButton.Bind(wx.EVT_BUTTON, self.OnSaveAreas)
         loadCoordsButton.Bind(wx.EVT_BUTTON, self.OnLoadCoords)
         startTrackingButton.Bind(wx.EVT_BUTTON, self.OnStartTracking)
         quitButton.Bind(wx.EVT_BUTTON, self.OnQuit)
@@ -45,12 +58,14 @@ class Example(wx.Frame):
         self.selectCoordsButton = selectCoordsButton
         self.selectDetectionAreaButton = selectDetectionAreaButton
         self.addAdditionalAreaButton = addAdditionalAreaButton
+        self.saveAreasButton = saveAreasButton
         self.loadCoordsButton = loadCoordsButton
         self.startTrackingButton = startTrackingButton
 
         self.selectCoordsButton.Disable()
         self.selectDetectionAreaButton.Disable()
         self.addAdditionalAreaButton.Disable()
+        self.saveAreasButton.Disable()
         self.loadCoordsButton.Disable()
         self.startTrackingButton.Disable()
 
@@ -68,12 +83,22 @@ class Example(wx.Frame):
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return
             self.video_path = fileDialog.GetPath()
+            self.ResetAreas()
             self.LoadVideoFrame()
             self.selectCoordsButton.Enable()
             self.selectDetectionAreaButton.Enable()
             self.addAdditionalAreaButton.Enable()
             self.loadCoordsButton.Enable()
             self.startTrackingButton.Enable()
+
+    def ResetAreas(self):
+        """Resets the area data when opening a new video."""
+        self.coordinates = []
+        self.real_life_coords = []
+        self.detection_area = []
+        self.additional_areas = []
+        self.static_bitmap = None
+        self.saveAreasButton.Disable()
 
     def LoadVideoFrame(self):
         if not self.video_path:
@@ -133,7 +158,8 @@ class Example(wx.Frame):
                 if real_x is None or real_y is None:
                     self.coordinates = []
                     self.real_life_coords = []
-                    wx.MessageBox('You cancelled entering coordinates. Please enter all 4 coordinates again.', 'Error', wx.OK | wx.ICON_ERROR)
+                    wx.MessageBox('You cancelled entering coordinates. Please enter all 4 coordinates again.', 'Error',
+                                  wx.OK | wx.ICON_ERROR)
                     return
                 self.real_life_coords.append((real_x, real_y))
                 self.DrawOnBitmap(static_bitmap, mode)
@@ -156,11 +182,13 @@ class Example(wx.Frame):
                 self.additional_areas[-1].append((int(x * self.scale_factor_x), int(y * self.scale_factor_y)))
                 self.DrawOnBitmap(static_bitmap, mode)
             if len(self.additional_areas[-1]) == 4:
-                wx.MessageBox(f'Additional area {len(self.additional_areas)} selected.', 'Info', wx.OK | wx.ICON_INFORMATION)
+                wx.MessageBox(f'Additional area {len(self.additional_areas)} selected.', 'Info',
+                              wx.OK | wx.ICON_INFORMATION)
                 static_bitmap.Unbind(wx.EVT_LEFT_DOWN)
                 window.Close()
 
         self.AdjustVideoSize()
+        self.CheckEnableSaveAreas()
 
     def DrawOnBitmap(self, static_bitmap, mode):
         width, height = self.scaled_frame.shape[1], self.scaled_frame.shape[0]
@@ -174,11 +202,14 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.coordinates):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x), int(self.coordinates[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x),
+                                   int(self.coordinates[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
             if len(self.coordinates) == 4:
-                scaled_first = (int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
-                scaled_last = (int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
+                scaled_first = (
+                int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
+                scaled_last = (
+                int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         elif mode == 'detection':
@@ -186,11 +217,14 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.detection_area):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x), int(self.detection_area[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x),
+                                   int(self.detection_area[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
             if len(self.detection_area) == 4:
-                scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
-                scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
+                scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x),
+                                int(self.detection_area[0][1] / self.scale_factor_y))
+                scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x),
+                               int(self.detection_area[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         elif mode == 'additional':
@@ -198,11 +232,14 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.additional_areas[-1]):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.additional_areas[-1][i - 1][0] / self.scale_factor_x), int(self.additional_areas[-1][i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.additional_areas[-1][i - 1][0] / self.scale_factor_x),
+                                   int(self.additional_areas[-1][i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
             if len(self.additional_areas[-1]) == 4:
-                scaled_first = (int(self.additional_areas[-1][0][0] / self.scale_factor_x), int(self.additional_areas[-1][0][1] / self.scale_factor_y))
-                scaled_last = (int(self.additional_areas[-1][3][0] / self.scale_factor_x), int(self.additional_areas[-1][3][1] / self.scale_factor_y))
+                scaled_first = (int(self.additional_areas[-1][0][0] / self.scale_factor_x),
+                                int(self.additional_areas[-1][0][1] / self.scale_factor_y))
+                scaled_last = (int(self.additional_areas[-1][3][0] / self.scale_factor_x),
+                               int(self.additional_areas[-1][3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         dc.SelectObject(wx.NullBitmap)
@@ -226,10 +263,13 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.coordinates):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x), int(self.coordinates[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x),
+                                   int(self.coordinates[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
-            scaled_first = (int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
-            scaled_last = (int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
+            scaled_first = (
+            int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
+            scaled_last = (
+            int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
             gc.StrokeLine(*scaled_first, *scaled_last)
 
         # Draw detection area
@@ -238,10 +278,13 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.detection_area):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x), int(self.detection_area[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x),
+                                   int(self.detection_area[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
-            scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
-            scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
+            scaled_first = (
+            int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
+            scaled_last = (
+            int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
             gc.StrokeLine(*scaled_first, *scaled_last)
 
         # Draw additional areas
@@ -251,7 +294,8 @@ class Example(wx.Frame):
                 for i, coord in enumerate(area):
                     scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                     if i > 0:
-                        scaled_prev = (int(area[i - 1][0] / self.scale_factor_x), int(area[i - 1][1] / self.scale_factor_y))
+                        scaled_prev = (
+                        int(area[i - 1][0] / self.scale_factor_x), int(area[i - 1][1] / self.scale_factor_y))
                         gc.StrokeLine(*scaled_prev, *scaled_coord)
                 scaled_first = (int(area[0][0] / self.scale_factor_x), int(area[0][1] / self.scale_factor_y))
                 scaled_last = (int(area[3][0] / self.scale_factor_x), int(area[3][1] / self.scale_factor_y))
@@ -285,6 +329,23 @@ class Example(wx.Frame):
             self.additional_areas.append([])
             self.ShowFrame('additional')
 
+    def OnSaveAreas(self, event):
+        if not self.coordinates or not self.detection_area:
+            wx.MessageBox('Please select perspective transform area and detection area before saving.', 'Error',
+                          wx.OK | wx.ICON_ERROR)
+            return
+        save_dialog = wx.FileDialog(self, "Save areas", wildcard="(*.json)|*.json",
+                                    style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+                                    defaultFile=os.path.splitext(os.path.basename(self.video_path))[0] + "_areas.json")
+        if save_dialog.ShowModal() == wx.ID_OK:
+            self.SaveCoordinates(save_dialog.GetPath())
+
+    def CheckEnableSaveAreas(self):
+        if self.coordinates and self.detection_area:
+            self.saveAreasButton.Enable()
+        else:
+            self.saveAreasButton.Disable()
+
     def OnLoadCoords(self, event):
         with wx.FileDialog(self, "Open coordinates file", wildcard="(*.json)|*.json",
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
@@ -293,6 +354,7 @@ class Example(wx.Frame):
             path_to_coords = fileDialog.GetPath()
             self.LoadCoordinates(path_to_coords)
             self.LoadVideoFrame()
+            self.CheckEnableSaveAreas()
 
     def LoadCoordinates(self, path):
         with open(path, 'r') as file:
@@ -338,28 +400,38 @@ class Example(wx.Frame):
 
     def OnStartTracking(self, event):
         if not self.video_path or not self.coordinates or not self.real_life_coords or not self.detection_area:
-            wx.MessageBox('Please select video, perspective transform area, and detection area.', 'Error', wx.OK | wx.ICON_ERROR)
+            wx.MessageBox('Please select video, perspective transform area, and detection area.', 'Error',
+                          wx.OK | wx.ICON_ERROR)
             return
-        start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area, self.additional_areas)
+
+        self.img_size = int(self.imgSizeChoice.GetStringSelection())
+        self.confidence = float(self.confChoice.GetStringSelection())
+
+        start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area,
+                       self.additional_areas, self.img_size, self.confidence)
         self.EnableButtons(True)
 
     def EnableButtons(self, state):
         self.selectCoordsButton.Enable(state)
         self.selectDetectionAreaButton.Enable(state)
         self.addAdditionalAreaButton.Enable(state)
+        self.saveAreasButton.Enable(state)
         self.loadCoordsButton.Enable(state)
         self.startTrackingButton.Enable(state)
         self.selectCoordsButton.Refresh()
         self.selectDetectionAreaButton.Refresh()
         self.addAdditionalAreaButton.Refresh()
+        self.saveAreasButton.Refresh()
         self.loadCoordsButton.Refresh()
         self.startTrackingButton.Refresh()
+
 
 def main():
     app = wx.App()
     ex = Example(None)
     ex.Show()
     app.MainLoop()
+
 
 if __name__ == '__main__':
     main()

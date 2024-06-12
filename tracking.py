@@ -22,7 +22,7 @@ class ViewTransformer:
         return transformed_points.reshape(-1, 2)
 
 def LoadObjectDetection():
-    od = ObjectDetection("dnn_model/yolov8m.pt")
+    od = ObjectDetection("dnn_model/yolov8x.pt")
     od.load_class_names("dnn_model/classes.txt")
     return od
 
@@ -40,7 +40,7 @@ def get_color_for_tracker_id(tracker_id):
     np.random.seed(tracker_id)
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
-def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas):
+def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, imgsz, conf):
     SOURCE = np.array(coordinates)
 
     # Calculate TARGET_WIDTH and TARGET_HEIGHT from real_life_coords
@@ -76,7 +76,7 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
         if not ret:
             break
 
-        bboxes, class_ids, scores = od.detect(frame, imgsz=1280, conf=0.5)
+        bboxes, class_ids, scores = od.detect(frame, imgsz=imgsz, conf=conf)
         bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
 
         for bbox_id in bboxes_ids:
@@ -114,7 +114,7 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                 else:
                     coordinates_by_id[object_id].append((bottom_center_x, bottom_center_y))
 
-                    if len(coordinates_by_id[object_id]) > fps * (3 / 4):
+                    if len(coordinates_by_id[object_id]) > fps / 2:
                         start_point = coordinates_by_id[object_id][0]
                         end_point = coordinates_by_id[object_id][-1]
                         transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
