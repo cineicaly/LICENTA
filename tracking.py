@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from collections import defaultdict, deque
 import os
+import csv
 from engine.object_detection import ObjectDetection
 from engine.object_tracking import MultiObjectTracking
 
@@ -40,7 +41,8 @@ def get_color_for_tracker_id(tracker_id):
     np.random.seed(tracker_id)
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
-def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, imgsz, conf):
+def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, additional_area_names,
+                   img_size=1280, confidence=0.5):
     SOURCE = np.array(coordinates)
 
     # Calculate TARGET_WIDTH and TARGET_HEIGHT from real_life_coords
@@ -68,36 +70,63 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
     coordinates_by_id = defaultdict(lambda: deque(maxlen=int(fps)))
 
-    detection_polygon = np.array(detection_area, dtype=np.int32)
-    additional_polygons = [np.array(area, dtype=np.int32) for area in additional_areas]
+    # Data for additional areas
+    entry_frames = {i: {} for i in range(len(additional_areas))}
+    exit_frames = {i: {} for i in range(len(additional_areas))}
+    vehicle_speeds = {i: {} for i in range(len(additional_areas))}
+    detected_vehicles = {i: set() for i in range(len(additional_areas))}  # Track initially detected vehicles
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    def create_unique_csv_filename(base_path):
+        counter = 1
+        base_name = os.path.splitext(base_path)[0]
+        extension = os.path.splitext(base_path)[1]
 
-        bboxes, class_ids, scores = od.detect(frame, imgsz=imgsz, conf=conf)
-        bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
+        unique_path = base_path
+        while os.path.exists(unique_path):
+            unique_path = f"{base_name}({counter}){extension}"
+            counter += 1
 
-        for bbox_id in bboxes_ids:
-            (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
+        return unique_path
 
-            # Calculate the center of the bottom bounding box side
-            bottom_center_x = int((x + x2) / 2)
-            bottom_center_y = y2
+    csv_file = create_unique_csv_filename(os.path.splitext(video_path)[0] + "_vehicle_data.csv")
 
-            if object_id not in ema_coords:
-                ema_coords[object_id] = (bottom_center_x, bottom_center_y)
-            else:
-                prev_x, prev_y = ema_coords[object_id]
-                bottom_center_x = int(alpha * bottom_center_x + (1 - alpha) * prev_x)
-                bottom_center_y = int(alpha * bottom_center_y + (1 - alpha) * prev_y)
-                ema_coords[object_id] = (bottom_center_x, bottom_center_y)
+    with open(csv_file, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Area', 'Time Entered', 'Time Exited', 'Vehicle ID', 'Vehicle Type', 'Average Speed'])
 
-            is_inside_detection = cv2.pointPolygonTest(detection_polygon, (bottom_center_x, bottom_center_y), False)
-            is_inside_perspective = cv2.pointPolygonTest(SOURCE, (bottom_center_x, bottom_center_y), False)
+        frame_count = 0
 
-            if is_inside_detection > 0 and is_inside_perspective > 0:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            bboxes, class_ids, scores = od.detect(frame, imgsz=img_size, conf=confidence)
+            bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
+
+            for bbox_id in bboxes_ids:
+                (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
+                cx = int((x + x2) / 2)
+                cy = int(y2)  # Use the center of the bottom edge of the bounding box
+
+                if object_id not in ema_coords:
+                    ema_coords[object_id] = (cx, cy)
+                else:
+                    prev_cx, prev_cy = ema_coords[object_id]
+                    cx = alpha * cx + (1 - alpha) * prev_cx
+                    cy = alpha * cy + (1 - alpha) * prev_cy
+                    ema_coords[object_id] = (cx, cy)
+
+                # Check if inside the perspective transform area
+                is_inside_perspective = cv2.pointPolygonTest(SOURCE, (cx, cy), False)
+                if is_inside_perspective <= 0:
+                    continue
+
+                # Check if inside the detection area
+                is_inside_detection = cv2.pointPolygonTest(np.array(detection_area), (cx, cy), False)
+                if is_inside_detection <= 0:
+                    continue
+
                 color = get_color_for_tracker_id(object_id)
 
                 cv2.rectangle(frame, (x, y), (x2, y2), color, 1)
@@ -112,33 +141,62 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                 if object_id not in coordinates_by_id:
                     coordinates_by_id[object_id] = deque(maxlen=int(fps))
                 else:
-                    coordinates_by_id[object_id].append((bottom_center_x, bottom_center_y))
+                    coordinates_by_id[object_id].append((cx, cy))
 
-                    if len(coordinates_by_id[object_id]) > fps / 2:
-                        start_point = coordinates_by_id[object_id][0]
-                        end_point = coordinates_by_id[object_id][-1]
-                        transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
-                        transformed_end = view_transformer.transform_points(np.array([end_point]))[0]
-                        distance = np.linalg.norm(transformed_end - transformed_start)
-                        time_elapsed = len(coordinates_by_id[object_id]) / fps
-                        speed = (distance / time_elapsed) * 3.6
-                        speed_by_id[object_id] = speed
+                if len(coordinates_by_id[object_id]) > fps / 2:
+                    start_point = coordinates_by_id[object_id][0]
+                    end_point = coordinates_by_id[object_id][-1]
+                    transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
+                    transformed_end = view_transformer.transform_points(np.array([end_point]))[0]
+                    distance = np.linalg.norm(transformed_end - transformed_start)
+                    time_elapsed = len(coordinates_by_id[object_id]) / fps
+                    speed = (distance / time_elapsed) * 3.6
+                    speed_by_id[object_id] = speed
 
                 vehicles_ids1.add(object_id)
 
-        cv2.putText(frame, "VEHICLES AREA 1: {}".format(len(vehicles_ids1)), (600, 50), cv2.FONT_HERSHEY_PLAIN,
-                    1.5, (15, 225, 215), 2)
+                # Process each additional area
+                for i, area in enumerate(additional_areas):
+                    is_inside_area = cv2.pointPolygonTest(np.array(area), (cx, cy), False)
+                    if is_inside_area > 0:
+                        if object_id not in entry_frames[i]:
+                            # Skip vehicles detected inside area from start
+                            if object_id not in detected_vehicles[i]:
+                                detected_vehicles[i].add(object_id)
+                                continue
 
-        cv2.polylines(frame, [detection_polygon], True, (0, 0, 225), 4)
+                            entry_frames[i][object_id] = frame_count
+                            vehicle_speeds[i][object_id] = deque()  # Store speeds
+                        if speed_by_id.get(object_id, 0) > 0:  # Record only if valid speed estimation
+                            vehicle_speeds[i][object_id].append(speed_by_id[object_id])
+                    elif object_id in entry_frames[i]:
+                        if object_id not in exit_frames[i]:
+                            exit_frames[i][object_id] = frame_count
+                            if vehicle_speeds[i][object_id]:  # Ensure there are valid speed measurements
+                                avg_speed = round(np.mean(vehicle_speeds[i][object_id]), 2)
+                                writer.writerow(
+                                    [additional_area_names[i],
+                                     entry_frames[i][object_id] / fps,
+                                     exit_frames[i][object_id] / fps,
+                                     object_id,
+                                     class_name,
+                                     avg_speed])
+                            del entry_frames[i][object_id]
+                            del vehicle_speeds[i][object_id]
+                            if object_id in exit_frames[i]:
+                                del exit_frames[i][object_id]
 
-        for area in additional_polygons:
-            cv2.polylines(frame, [area], True, (0, 255, 0), 2)
+            cv2.polylines(frame, [np.array(detection_area)], True, (0, 0, 225), 4)
+            for area in additional_areas:
+                cv2.polylines(frame, [np.array(area)], True, (255, 0, 0), 2)
 
-        cv2.namedWindow('tracker_frame', cv2.WINDOW_NORMAL)
-        cv2.imshow("tracker_frame", frame)
-        key = cv2.waitKey(1)
-        if key == 27:
-            break
+            cv2.namedWindow('tracker_frame', cv2.WINDOW_NORMAL)
+            cv2.imshow("tracker_frame", frame)
+            key = cv2.waitKey(1)
+            if key == 27:
+                break
+
+            frame_count += 1
 
     cap.release()
     cv2.destroyAllWindows()

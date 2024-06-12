@@ -4,7 +4,6 @@ import json
 import os
 from tracking import start_tracking
 
-
 class Example(wx.Frame):
 
     def __init__(self, *args, **kwargs):
@@ -14,6 +13,7 @@ class Example(wx.Frame):
         self.real_life_coords = []
         self.detection_area = []
         self.additional_areas = []
+        self.additional_area_names = []  # List to store names of additional areas
         self.video_path = ""
         self.frame = None
         self.scaled_frame = None
@@ -97,6 +97,7 @@ class Example(wx.Frame):
         self.real_life_coords = []
         self.detection_area = []
         self.additional_areas = []
+        self.additional_area_names = []  # Reset area names
         self.static_bitmap = None
         self.saveAreasButton.Disable()
 
@@ -158,8 +159,7 @@ class Example(wx.Frame):
                 if real_x is None or real_y is None:
                     self.coordinates = []
                     self.real_life_coords = []
-                    wx.MessageBox('You cancelled entering coordinates. Please enter all 4 coordinates again.', 'Error',
-                                  wx.OK | wx.ICON_ERROR)
+                    wx.MessageBox('You cancelled entering coordinates. Please enter all 4 coordinates again.', 'Error', wx.OK | wx.ICON_ERROR)
                     return
                 self.real_life_coords.append((real_x, real_y))
                 self.DrawOnBitmap(static_bitmap, mode)
@@ -178,14 +178,20 @@ class Example(wx.Frame):
                 window.Close()
 
         elif mode == 'additional':
-            if len(self.additional_areas[-1]) < 4:
+            if self.additional_areas and len(self.additional_areas[-1]) < 4:
                 self.additional_areas[-1].append((int(x * self.scale_factor_x), int(y * self.scale_factor_y)))
                 self.DrawOnBitmap(static_bitmap, mode)
-            if len(self.additional_areas[-1]) == 4:
-                wx.MessageBox(f'Additional area {len(self.additional_areas)} selected.', 'Info',
-                              wx.OK | wx.ICON_INFORMATION)
-                static_bitmap.Unbind(wx.EVT_LEFT_DOWN)
-                window.Close()
+                if len(self.additional_areas[-1]) == 4:
+                    area_name = self.PromptForAreaName(window)
+                    if area_name is None:
+                        wx.MessageBox('You cancelled entering the area name. Please name the area.', 'Error', wx.OK | wx.ICON_ERROR)
+                        self.additional_areas.pop()  # Remove incomplete area
+                        window.Close()
+                        return
+                    self.additional_area_names[-1] = area_name
+                    wx.MessageBox(f'Additional area "{area_name}" selected.', 'Info', wx.OK | wx.ICON_INFORMATION)
+                    static_bitmap.Unbind(wx.EVT_LEFT_DOWN)
+                    window.Close()
 
         self.AdjustVideoSize()
         self.CheckEnableSaveAreas()
@@ -202,14 +208,11 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.coordinates):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x),
-                                   int(self.coordinates[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x), int(self.coordinates[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
             if len(self.coordinates) == 4:
-                scaled_first = (
-                int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
-                scaled_last = (
-                int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
+                scaled_first = (int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
+                scaled_last = (int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         elif mode == 'detection':
@@ -217,30 +220,25 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.detection_area):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x),
-                                   int(self.detection_area[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x), int(self.detection_area[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
             if len(self.detection_area) == 4:
-                scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x),
-                                int(self.detection_area[0][1] / self.scale_factor_y))
-                scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x),
-                               int(self.detection_area[3][1] / self.scale_factor_y))
+                scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
+                scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         elif mode == 'additional':
-            gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
-            for i, coord in enumerate(self.additional_areas[-1]):
-                scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
-                if i > 0:
-                    scaled_prev = (int(self.additional_areas[-1][i - 1][0] / self.scale_factor_x),
-                                   int(self.additional_areas[-1][i - 1][1] / self.scale_factor_y))
-                    gc.StrokeLine(*scaled_prev, *scaled_coord)
-            if len(self.additional_areas[-1]) == 4:
-                scaled_first = (int(self.additional_areas[-1][0][0] / self.scale_factor_x),
-                                int(self.additional_areas[-1][0][1] / self.scale_factor_y))
-                scaled_last = (int(self.additional_areas[-1][3][0] / self.scale_factor_x),
-                               int(self.additional_areas[-1][3][1] / self.scale_factor_y))
-                gc.StrokeLine(*scaled_first, *scaled_last)
+            if self.additional_areas:
+                gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
+                for i, coord in enumerate(self.additional_areas[-1]):
+                    scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
+                    if i > 0:
+                        scaled_prev = (int(self.additional_areas[-1][i - 1][0] / self.scale_factor_x), int(self.additional_areas[-1][i - 1][1] / self.scale_factor_y))
+                        gc.StrokeLine(*scaled_prev, *scaled_coord)
+                if len(self.additional_areas[-1]) == 4:
+                    scaled_first = (int(self.additional_areas[-1][0][0] / self.scale_factor_x), int(self.additional_areas[-1][0][1] / self.scale_factor_y))
+                    scaled_last = (int(self.additional_areas[-1][3][0] / self.scale_factor_x), int(self.additional_areas[-1][3][1] / self.scale_factor_y))
+                    gc.StrokeLine(*scaled_first, *scaled_last)
 
         dc.SelectObject(wx.NullBitmap)
         static_bitmap.SetBitmap(bitmap)
@@ -263,13 +261,10 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.coordinates):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x),
-                                   int(self.coordinates[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.coordinates[i - 1][0] / self.scale_factor_x), int(self.coordinates[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
-            scaled_first = (
-            int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
-            scaled_last = (
-            int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
+            scaled_first = (int(self.coordinates[0][0] / self.scale_factor_x), int(self.coordinates[0][1] / self.scale_factor_y))
+            scaled_last = (int(self.coordinates[3][0] / self.scale_factor_x), int(self.coordinates[3][1] / self.scale_factor_y))
             gc.StrokeLine(*scaled_first, *scaled_last)
 
         # Draw detection area
@@ -278,28 +273,34 @@ class Example(wx.Frame):
             for i, coord in enumerate(self.detection_area):
                 scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                 if i > 0:
-                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x),
-                                   int(self.detection_area[i - 1][1] / self.scale_factor_y))
+                    scaled_prev = (int(self.detection_area[i - 1][0] / self.scale_factor_x), int(self.detection_area[i - 1][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_prev, *scaled_coord)
-            scaled_first = (
-            int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
-            scaled_last = (
-            int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
+            scaled_first = (int(self.detection_area[0][0] / self.scale_factor_x), int(self.detection_area[0][1] / self.scale_factor_y))
+            scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
             gc.StrokeLine(*scaled_first, *scaled_last)
 
         # Draw additional areas
         gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
-        for area in self.additional_areas:
+        for i, area in enumerate(self.additional_areas):
             if len(area) == 4:
-                for i, coord in enumerate(area):
+                for j, coord in enumerate(area):
                     scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
-                    if i > 0:
-                        scaled_prev = (
-                        int(area[i - 1][0] / self.scale_factor_x), int(area[i - 1][1] / self.scale_factor_y))
+                    if j > 0:
+                        scaled_prev = (int(area[j - 1][0] / self.scale_factor_x), int(area[j - 1][1] / self.scale_factor_y))
                         gc.StrokeLine(*scaled_prev, *scaled_coord)
                 scaled_first = (int(area[0][0] / self.scale_factor_x), int(area[0][1] / self.scale_factor_y))
                 scaled_last = (int(area[3][0] / self.scale_factor_x), int(area[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
+
+                # Draw area name
+                font = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+                gc.SetFont(font, wx.Colour(0, 0, 0))  # Specify both font and color
+                area_name = self.additional_area_names[i]
+                text_x, text_y = scaled_first
+                text_w, text_h = gc.GetTextExtent(area_name)
+                gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
+                gc.DrawRectangle(text_x, text_y - text_h, text_w, text_h)
+                gc.DrawText(area_name, text_x, text_y - text_h)
 
         dc.SelectObject(wx.NullBitmap)
         self.bitmap = bitmap
@@ -326,13 +327,13 @@ class Example(wx.Frame):
             wx.MessageBox('Maximum number of additional areas reached.', 'Error', wx.OK | wx.ICON_ERROR)
             return
         if self.frame is not None:
-            self.additional_areas.append([])
+            self.additional_areas.append([])  # Start a new area selection
+            self.additional_area_names.append("")  # Add placeholder for area name
             self.ShowFrame('additional')
 
     def OnSaveAreas(self, event):
         if not self.coordinates or not self.detection_area:
-            wx.MessageBox('Please select perspective transform area and detection area before saving.', 'Error',
-                          wx.OK | wx.ICON_ERROR)
+            wx.MessageBox('Please select perspective transform area and detection area before saving.', 'Error', wx.OK | wx.ICON_ERROR)
             return
         save_dialog = wx.FileDialog(self, "Save areas", wildcard="(*.json)|*.json",
                                     style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
@@ -363,17 +364,20 @@ class Example(wx.Frame):
             self.real_life_coords = data.get('real_life_coords', [])
             self.detection_area = data.get('detection_area', [])
             self.additional_areas = data.get('additional_areas', [])
+            self.additional_area_names = data.get('additional_area_names', [])
         print("Loaded coordinates:", self.coordinates)
         print("Loaded real-life coordinates:", self.real_life_coords)
         print("Loaded detection area:", self.detection_area)
         print("Loaded additional areas:", self.additional_areas)
+        print("Loaded additional area names:", self.additional_area_names)
 
     def SaveCoordinates(self, path):
         data = {
             'coordinates': self.coordinates,
             'real_life_coords': self.real_life_coords,
             'detection_area': self.detection_area,
-            'additional_areas': self.additional_areas
+            'additional_areas': self.additional_areas,
+            'additional_area_names': self.additional_area_names  # Save area names
         }
         with open(path, 'w') as file:
             json.dump(data, file)
@@ -398,17 +402,25 @@ class Example(wx.Frame):
 
         return float(real_x), float(real_y)
 
+    def PromptForAreaName(self, window):
+        dlg = wx.TextEntryDialog(window, "Enter a name for the additional area:", "Area Name", "")
+        if dlg.ShowModal() == wx.ID_OK:
+            area_name = dlg.GetValue()
+        else:
+            dlg.Destroy()
+            return None
+        dlg.Destroy()
+        return area_name
+
     def OnStartTracking(self, event):
         if not self.video_path or not self.coordinates or not self.real_life_coords or not self.detection_area:
-            wx.MessageBox('Please select video, perspective transform area, and detection area.', 'Error',
-                          wx.OK | wx.ICON_ERROR)
+            wx.MessageBox('Please select video, perspective transform area, and detection area.', 'Error', wx.OK | wx.ICON_ERROR)
             return
 
         self.img_size = int(self.imgSizeChoice.GetStringSelection())
         self.confidence = float(self.confChoice.GetStringSelection())
 
-        start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area,
-                       self.additional_areas, self.img_size, self.confidence)
+        start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area, self.additional_areas, self.additional_area_names, self.img_size, self.confidence)
         self.EnableButtons(True)
 
     def EnableButtons(self, state):
@@ -425,13 +437,11 @@ class Example(wx.Frame):
         self.loadCoordsButton.Refresh()
         self.startTrackingButton.Refresh()
 
-
 def main():
     app = wx.App()
     ex = Example(None)
     ex.Show()
     app.MainLoop()
-
 
 if __name__ == '__main__':
     main()
