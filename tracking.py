@@ -27,6 +27,10 @@ def LoadObjectDetection():
     od.load_class_names("dnn_model/classes.txt")
     return od
 
+def warpFrame(frame, transformer, target_width, target_height):
+    target_size = (int(target_width), int(target_height))
+    return cv2.warpPerspective(frame, transformer.m, target_size)
+
 def getVideoInfo(path):
     cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -41,7 +45,15 @@ def get_color_for_tracker_id(tracker_id):
     np.random.seed(tracker_id)
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
-def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, additional_area_names,
+def line_intersects_bbox(line, bbox):
+    (x1, y1), (x2, y2) = line
+    (bx1, by1, bx2, by2) = bbox
+    return (
+        ((x1 >= bx1 and x1 <= bx2) or (x2 >= bx1 and x2 <= bx2)) and
+        ((y1 >= by1 and y1 <= by2) or (y2 >= by1 and y2 <= by2))
+    )
+
+def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_lines, additional_line_names,
                    img_size=1280, confidence=0.5):
     SOURCE = np.array(coordinates)
 
@@ -63,18 +75,14 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
     od = LoadObjectDetection()
     tracker = LoadTracker()
 
-    vehicles_ids1 = set()
     speed_by_id = {}
     alpha = 0.1
     ema_coords = {}
 
     coordinates_by_id = defaultdict(lambda: deque(maxlen=int(fps)))
 
-    # Data for additional areas
-    entry_frames = {i: {} for i in range(len(additional_areas))}
-    exit_frames = {i: {} for i in range(len(additional_areas))}
-    vehicle_speeds = {i: {} for i in range(len(additional_areas))}
-    detected_vehicles = {i: set() for i in range(len(additional_areas))}  # Track initially detected vehicles
+    # Data for additional lines
+    line_intersections = {i: set() for i in range(len(additional_lines))}
 
     def create_unique_csv_filename(base_path):
         counter = 1
@@ -92,7 +100,7 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['Area', 'Time Entered', 'Time Exited', 'Vehicle ID', 'Vehicle Type', 'Average Speed'])
+        writer.writerow(['Line', 'Time', 'Vehicle ID', 'Vehicle Type', 'Speed'])
 
         frame_count = 0
 
@@ -101,13 +109,18 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
             if not ret:
                 break
 
+            # Warp the frame for perspective view
+            warped_frame = warpFrame(frame, view_transformer, TARGET_WIDTH, TARGET_HEIGHT)
+            cv2.namedWindow('warped_frame', cv2.WINDOW_NORMAL)
+            cv2.imshow("warped_frame", warped_frame)
+
             bboxes, class_ids, scores = od.detect(frame, imgsz=img_size, conf=confidence)
             bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
 
             for bbox_id in bboxes_ids:
                 (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
                 cx = int((x + x2) / 2)
-                cy = int(y2)  # Use the center of the bottom edge of the bounding box
+                cy = int((y + y2) / 2)  # Use the center of the bbox
 
                 if object_id not in ema_coords:
                     ema_coords[object_id] = (cx, cy)
@@ -129,21 +142,18 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
                 color = get_color_for_tracker_id(object_id)
 
-                cv2.rectangle(frame, (x, y), (x2, y2), color, 1)
+                cv2.rectangle(frame, (x, y), (x2, y2), color, 2)
 
                 class_name = od.classes[class_id]
                 label = "{} {:.2f} km/h".format(class_name, speed_by_id.get(object_id, 0))
-                (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 3, 2)
-
-                cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
-                cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 3, (255, 255, 255), 2)
+                (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 1, 1)
 
                 if object_id not in coordinates_by_id:
                     coordinates_by_id[object_id] = deque(maxlen=int(fps))
                 else:
                     coordinates_by_id[object_id].append((cx, cy))
 
-                if len(coordinates_by_id[object_id]) > fps / 2:
+                if len(coordinates_by_id[object_id]) > fps / 3:
                     start_point = coordinates_by_id[object_id][0]
                     end_point = coordinates_by_id[object_id][-1]
                     transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
@@ -152,46 +162,25 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                     time_elapsed = len(coordinates_by_id[object_id]) / fps
                     speed = (distance / time_elapsed) * 3.6
                     speed_by_id[object_id] = speed
+                    cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
+                    cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
 
-                vehicles_ids1.add(object_id)
+                # Process each additional line
+                for i, line in enumerate(additional_lines):
+                    line_points = np.array(line)
+                    if line_intersects_bbox(line_points, (x, y, x2, y2)) and object_id not in line_intersections[i]:
+                        line_intersections[i].add(object_id)
+                        writer.writerow([additional_line_names[i], frame_count / fps, object_id, class_name, round(speed_by_id.get(object_id, 0), 2)])
 
-                # Process each additional area
-                for i, area in enumerate(additional_areas):
-                    is_inside_area = cv2.pointPolygonTest(np.array(area), (cx, cy), False)
-                    if is_inside_area > 0:
-                        if object_id not in entry_frames[i]:
-                            # Skip vehicles detected inside area from start
-                            if object_id not in detected_vehicles[i]:
-                                detected_vehicles[i].add(object_id)
-                                continue
-
-                            entry_frames[i][object_id] = frame_count
-                            vehicle_speeds[i][object_id] = deque()  # Store speeds
-                        if speed_by_id.get(object_id, 0) > 0:  # Record only if valid speed estimation
-                            vehicle_speeds[i][object_id].append(speed_by_id[object_id])
-                    elif object_id in entry_frames[i]:
-                        if object_id not in exit_frames[i]:
-                            exit_frames[i][object_id] = frame_count
-                            if vehicle_speeds[i][object_id]:  # Ensure there are valid speed measurements
-                                avg_speed = round(np.mean(vehicle_speeds[i][object_id]), 2)
-                                writer.writerow(
-                                    [additional_area_names[i],
-                                     entry_frames[i][object_id] / fps,
-                                     exit_frames[i][object_id] / fps,
-                                     object_id,
-                                     class_name,
-                                     avg_speed])
-                            del entry_frames[i][object_id]
-                            del vehicle_speeds[i][object_id]
-                            if object_id in exit_frames[i]:
-                                del exit_frames[i][object_id]
-
+            # Draw detection and additional lines
             cv2.polylines(frame, [np.array(detection_area)], True, (0, 0, 225), 4)
-            for area in additional_areas:
-                cv2.polylines(frame, [np.array(area)], True, (255, 0, 0), 2)
+            for line in additional_lines:
+                cv2.line(frame, tuple(line[0]), tuple(line[1]), (255, 0, 0), 3)
 
+            # Show the original frame with tracking
             cv2.namedWindow('tracker_frame', cv2.WINDOW_NORMAL)
             cv2.imshow("tracker_frame", frame)
+
             key = cv2.waitKey(1)
             if key == 27:
                 break
