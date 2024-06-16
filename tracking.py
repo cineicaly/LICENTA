@@ -45,28 +45,16 @@ def get_color_for_tracker_id(tracker_id):
     np.random.seed(tracker_id)
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
-def line_intersects_bbox(line, bbox):
-    (x1, y1), (x2, y2) = line
-    (bx1, by1, bx2, by2) = bbox
-    return (
-        ((x1 >= bx1 and x1 <= bx2) or (x2 >= bx1 and x2 <= bx2)) and
-        ((y1 >= by1 and y1 <= by2) or (y2 >= by1 and y2 <= by2))
-    )
-
-def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_lines, additional_line_names,
+def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, additional_area_names,
                    img_size=1280, confidence=0.5):
     SOURCE = np.array(coordinates)
 
-    # Calculate TARGET_WIDTH and TARGET_HEIGHT from real_life_coords
-    TARGET_WIDTH = max([coord[0] for coord in real_life_coords])
-    TARGET_HEIGHT = max([coord[1] for coord in real_life_coords])
-
     TARGET = np.array(
         [
-            [0, 0],
-            [TARGET_WIDTH - 1, 0],
-            [TARGET_WIDTH - 1, TARGET_HEIGHT - 1],
-            [0, TARGET_HEIGHT - 1],
+            real_life_coords[0],  # Top-left corner (no adjustment needed)
+            [real_life_coords[1][0] - 1, real_life_coords[1][1]],  # Top-right corner
+            [real_life_coords[2][0] - 1, real_life_coords[2][1] - 1],  # Bottom-right corner
+            [real_life_coords[3][0], real_life_coords[3][1] - 1]  # Bottom-left corner
         ]
     )
     view_transformer = ViewTransformer(source=SOURCE, target=TARGET)
@@ -81,8 +69,8 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
     coordinates_by_id = defaultdict(lambda: deque(maxlen=int(fps)))
 
-    # Data for additional lines
-    line_intersections = {i: set() for i in range(len(additional_lines))}
+    # Data for additional areas
+    area_intersections = {i: set() for i in range(len(additional_areas))}
 
     def create_unique_csv_filename(base_path):
         counter = 1
@@ -100,7 +88,7 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
     with open(csv_file, mode='w', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['Line', 'Time', 'Vehicle ID', 'Vehicle Type', 'Speed'])
+        writer.writerow(['Area', 'Time', 'Vehicle ID', 'Vehicle Type', 'Speed'])
 
         frame_count = 0
 
@@ -110,11 +98,11 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                 break
 
             # Warp the frame for perspective view
-            warped_frame = warpFrame(frame, view_transformer, TARGET_WIDTH, TARGET_HEIGHT)
+            warped_frame = warpFrame(frame, view_transformer, TARGET[1][0] + 1, TARGET[2][1] + 1)
             cv2.namedWindow('warped_frame', cv2.WINDOW_NORMAL)
             cv2.imshow("warped_frame", warped_frame)
 
-            bboxes, class_ids, scores = od.detect(frame, imgsz=img_size, conf=confidence)
+            bboxes, class_ids, scores = od.detect(frame, imgsz=img_size, conf=confidence, classes=[2, 3, 5, 7])
             bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
 
             for bbox_id in bboxes_ids:
@@ -165,17 +153,18 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                     cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
                     cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
 
-                # Process each additional line
-                for i, line in enumerate(additional_lines):
-                    line_points = np.array(line)
-                    if line_intersects_bbox(line_points, (x, y, x2, y2)) and object_id not in line_intersections[i]:
-                        line_intersections[i].add(object_id)
-                        writer.writerow([additional_line_names[i], frame_count / fps, object_id, class_name, round(speed_by_id.get(object_id, 0), 2)])
+                # Process each additional area
+                for i, area in enumerate(additional_areas):
+                    area_points = np.array(area)
+                    if cv2.pointPolygonTest(area_points, (cx, cy), False) >= 0 and object_id not in area_intersections[i]:
+                        area_intersections[i].add(object_id)
+                        writer.writerow([additional_area_names[i], frame_count / fps, object_id, class_name,
+                                         round(speed_by_id.get(object_id, 0), 2)])
 
-            # Draw detection and additional lines
+            # Draw detection and additional areas
             cv2.polylines(frame, [np.array(detection_area)], True, (0, 0, 225), 4)
-            for line in additional_lines:
-                cv2.line(frame, tuple(line[0]), tuple(line[1]), (255, 0, 0), 3)
+            for area in additional_areas:
+                cv2.polylines(frame, [np.array(area)], True, (255, 0, 0), 3)
 
             # Show the original frame with tracking
             cv2.namedWindow('tracker_frame', cv2.WINDOW_NORMAL)

@@ -12,8 +12,8 @@ class Application(wx.Frame):
         self.coordinates = []
         self.real_life_coords = []
         self.detection_area = []
-        self.additional_lines = []  # Store lines as pairs of points
-        self.additional_line_names = []  # List to store names of additional lines
+        self.additional_areas = []  # Store areas as lists of points
+        self.additional_area_names = []  # List to store names of additional areas
         self.video_path = ""
         self.frame = None
         self.scaled_frame = None
@@ -32,7 +32,7 @@ class Application(wx.Frame):
         openVideoButton = wx.Button(panel, label='Open Video', pos=(10, 10), size=button_size)
         selectCoordsButton = wx.Button(panel, label='Select Coordinates', pos=(160, 10), size=button_size)
         selectDetectionAreaButton = wx.Button(panel, label='Select Detection Area', pos=(310, 10), size=button_size)
-        addAdditionalLineButton = wx.Button(panel, label='Add Additional Line', pos=(460, 10), size=button_size)
+        addAdditionalAreaButton = wx.Button(panel, label='Add Additional Area', pos=(460, 10), size=button_size)
         saveAreasButton = wx.Button(panel, label='Save Areas', pos=(610, 10), size=button_size)
         loadCoordsButton = wx.Button(panel, label='Load File', pos=(760, 10), size=button_size)
         startTrackingButton = wx.Button(panel, label='Start Tracking', pos=(910, 10), size=button_size)
@@ -49,7 +49,7 @@ class Application(wx.Frame):
         openVideoButton.Bind(wx.EVT_BUTTON, self.OnOpen)
         selectCoordsButton.Bind(wx.EVT_BUTTON, self.OnSelectCoords)
         selectDetectionAreaButton.Bind(wx.EVT_BUTTON, self.OnSelectDetectionArea)
-        addAdditionalLineButton.Bind(wx.EVT_BUTTON, self.OnAddAdditionalLine)
+        addAdditionalAreaButton.Bind(wx.EVT_BUTTON, self.OnAddAdditionalArea)
         saveAreasButton.Bind(wx.EVT_BUTTON, self.OnSaveAreas)
         loadCoordsButton.Bind(wx.EVT_BUTTON, self.OnLoadCoords)
         startTrackingButton.Bind(wx.EVT_BUTTON, self.OnStartTracking)
@@ -57,14 +57,14 @@ class Application(wx.Frame):
 
         self.selectCoordsButton = selectCoordsButton
         self.selectDetectionAreaButton = selectDetectionAreaButton
-        self.addAdditionalLineButton = addAdditionalLineButton
+        self.addAdditionalAreaButton = addAdditionalAreaButton
         self.saveAreasButton = saveAreasButton
         self.loadCoordsButton = loadCoordsButton
         self.startTrackingButton = startTrackingButton
 
         self.selectCoordsButton.Disable()
         self.selectDetectionAreaButton.Disable()
-        self.addAdditionalLineButton.Disable()
+        self.addAdditionalAreaButton.Disable()
         self.saveAreasButton.Disable()
         self.loadCoordsButton.Disable()
         self.startTrackingButton.Disable()
@@ -87,7 +87,7 @@ class Application(wx.Frame):
             self.LoadVideoFrame()
             self.selectCoordsButton.Enable()
             self.selectDetectionAreaButton.Enable()
-            self.addAdditionalLineButton.Enable()
+            self.addAdditionalAreaButton.Enable()
             self.loadCoordsButton.Enable()
             self.startTrackingButton.Enable()
 
@@ -96,8 +96,8 @@ class Application(wx.Frame):
         self.coordinates = []
         self.real_life_coords = []
         self.detection_area = []
-        self.additional_lines = []  # Reset lines
-        self.additional_line_names = []  # Reset line names
+        self.additional_areas = []  # Reset areas
+        self.additional_area_names = []  # Reset area names
         self.static_bitmap = None
         self.saveAreasButton.Disable()
 
@@ -179,19 +179,19 @@ class Application(wx.Frame):
                 window.Close()
 
         elif mode == 'additional':
-            if self.additional_lines and len(self.additional_lines[-1]) < 2:
-                self.additional_lines[-1].append((int(x * self.scale_factor_x), int(y * self.scale_factor_y)))
+            if self.additional_areas and len(self.additional_areas[-1]) < 4:
+                self.additional_areas[-1].append((int(x * self.scale_factor_x), int(y * self.scale_factor_y)))
                 self.DrawOnBitmap(static_bitmap, mode)
-                if len(self.additional_lines[-1]) == 2:
-                    line_name = self.PromptForLineName(window)
-                    if line_name is None:
-                        wx.MessageBox('You cancelled entering the line name. Please name the line.', 'Error',
+                if len(self.additional_areas[-1]) == 4:
+                    area_name = self.PromptForAreaName(window)
+                    if area_name is None:
+                        wx.MessageBox('You cancelled entering the area name. Please name the area.', 'Error',
                                       wx.OK | wx.ICON_ERROR)
-                        self.additional_lines.pop()  # Remove incomplete line
+                        self.additional_areas.pop()  # Remove incomplete area
                         window.Close()
                         return
-                    self.additional_line_names[-1] = line_name
-                    wx.MessageBox(f'Additional line "{line_name}" selected.', 'Info', wx.OK | wx.ICON_INFORMATION)
+                    self.additional_area_names[-1] = area_name
+                    wx.MessageBox(f'Additional area "{area_name}" selected.', 'Info', wx.OK | wx.ICON_INFORMATION)
                     static_bitmap.Unbind(wx.EVT_LEFT_DOWN)
                     window.Close()
 
@@ -236,19 +236,19 @@ class Application(wx.Frame):
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
         elif mode == 'additional':
-            if self.additional_lines:
+            if self.additional_areas:
                 gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
-                for i, coord in enumerate(self.additional_lines[-1]):
+                for i, coord in enumerate(self.additional_areas[-1]):
                     scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
                     if i > 0:
-                        scaled_prev = (int(self.additional_lines[-1][i - 1][0] / self.scale_factor_x),
-                                       int(self.additional_lines[-1][i - 1][1] / self.scale_factor_y))
+                        scaled_prev = (int(self.additional_areas[-1][i - 1][0] / self.scale_factor_x),
+                                       int(self.additional_areas[-1][i - 1][1] / self.scale_factor_y))
                         gc.StrokeLine(*scaled_prev, *scaled_coord)
-                if len(self.additional_lines[-1]) == 2:
-                    scaled_first = (int(self.additional_lines[-1][0][0] / self.scale_factor_x),
-                                    int(self.additional_lines[-1][0][1] / self.scale_factor_y))
-                    scaled_last = (int(self.additional_lines[-1][1][0] / self.scale_factor_x),
-                                   int(self.additional_lines[-1][1][1] / self.scale_factor_y))
+                if len(self.additional_areas[-1]) == 4:
+                    scaled_first = (int(self.additional_areas[-1][0][0] / self.scale_factor_x),
+                                    int(self.additional_areas[-1][0][1] / self.scale_factor_y))
+                    scaled_last = (int(self.additional_areas[-1][3][0] / self.scale_factor_x),
+                                   int(self.additional_areas[-1][3][1] / self.scale_factor_y))
                     gc.StrokeLine(*scaled_first, *scaled_last)
 
         dc.SelectObject(wx.NullBitmap)
@@ -292,23 +292,29 @@ class Application(wx.Frame):
             scaled_last = (int(self.detection_area[3][0] / self.scale_factor_x), int(self.detection_area[3][1] / self.scale_factor_y))
             gc.StrokeLine(*scaled_first, *scaled_last)
 
-        # Draw additional lines
+        # Draw additional areas
         gc.SetPen(wx.Pen(wx.Colour(255, 0, 0), 2))
-        for i, line in enumerate(self.additional_lines):
-            if len(line) == 2:
-                scaled_first = (int(line[0][0] / self.scale_factor_x), int(line[0][1] / self.scale_factor_y))
-                scaled_last = (int(line[1][0] / self.scale_factor_x), int(line[1][1] / self.scale_factor_y))
+        for i, area in enumerate(self.additional_areas):
+            if len(area) == 4:
+                for j, coord in enumerate(area):
+                    scaled_coord = (int(coord[0] / self.scale_factor_x), int(coord[1] / self.scale_factor_y))
+                    if j > 0:
+                        scaled_prev = (int(area[j - 1][0] / self.scale_factor_x),
+                                       int(area[j - 1][1] / self.scale_factor_y))
+                        gc.StrokeLine(*scaled_prev, *scaled_coord)
+                scaled_first = (int(area[0][0] / self.scale_factor_x), int(area[0][1] / self.scale_factor_y))
+                scaled_last = (int(area[3][0] / self.scale_factor_x), int(area[3][1] / self.scale_factor_y))
                 gc.StrokeLine(*scaled_first, *scaled_last)
 
-                # Draw line name
+                # Draw area name
                 font = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
                 gc.SetFont(font, wx.Colour(0, 0, 0))  # Specify both font and color
-                line_name = self.additional_line_names[i]
+                area_name = self.additional_area_names[i]
                 text_x, text_y = scaled_first
-                text_w, text_h = gc.GetTextExtent(line_name)
+                text_w, text_h = gc.GetTextExtent(area_name)
                 gc.SetBrush(wx.Brush(wx.Colour(255, 255, 255)))
                 gc.DrawRectangle(text_x, text_y - text_h, text_w, text_h)
-                gc.DrawText(line_name, text_x, text_y - text_h)
+                gc.DrawText(area_name, text_x, text_y - text_h)
 
         dc.SelectObject(wx.NullBitmap)
         self.bitmap = bitmap
@@ -330,13 +336,13 @@ class Application(wx.Frame):
             self.detection_area = []
             self.ShowFrame('detection')
 
-    def OnAddAdditionalLine(self, event):
-        if len(self.additional_lines) >= 6:
-            wx.MessageBox('Maximum number of additional lines reached.', 'Error', wx.OK | wx.ICON_ERROR)
+    def OnAddAdditionalArea(self, event):
+        if len(self.additional_areas) >= 6:
+            wx.MessageBox('Maximum number of additional areas reached.', 'Error', wx.OK | wx.ICON_ERROR)
             return
         if self.frame is not None:
-            self.additional_lines.append([])  # Start a new line selection
-            self.additional_line_names.append("")  # Add placeholder for line name
+            self.additional_areas.append([])  # Start a new area selection
+            self.additional_area_names.append("")  # Add placeholder for area name
             self.ShowFrame('additional')
 
     def OnSaveAreas(self, event):
@@ -372,21 +378,21 @@ class Application(wx.Frame):
             self.coordinates = data.get('coordinates', [])
             self.real_life_coords = data.get('real_life_coords', [])
             self.detection_area = data.get('detection_area', [])
-            self.additional_lines = data.get('additional_lines', [])
-            self.additional_line_names = data.get('additional_line_names', [])
+            self.additional_areas = data.get('additional_areas', [])
+            self.additional_area_names = data.get('additional_area_names', [])
         print("Loaded coordinates:", self.coordinates)
         print("Loaded real-life coordinates:", self.real_life_coords)
         print("Loaded detection area:", self.detection_area)
-        print("Loaded additional lines:", self.additional_lines)
-        print("Loaded additional line names:", self.additional_line_names)
+        print("Loaded additional areas:", self.additional_areas)
+        print("Loaded additional area names:", self.additional_area_names)
 
     def SaveCoordinates(self, path):
         data = {
             'coordinates': self.coordinates,
             'real_life_coords': self.real_life_coords,
             'detection_area': self.detection_area,
-            'additional_lines': self.additional_lines,
-            'additional_line_names': self.additional_line_names  # Save line names
+            'additional_areas': self.additional_areas,
+            'additional_area_names': self.additional_area_names  # Save area names
         }
         with open(path, 'w') as file:
             json.dump(data, file)
@@ -411,15 +417,15 @@ class Application(wx.Frame):
 
         return float(real_x), float(real_y)
 
-    def PromptForLineName(self, window):
-        dlg = wx.TextEntryDialog(window, "Enter a name for the additional line:", "Line Name", "")
+    def PromptForAreaName(self, window):
+        dlg = wx.TextEntryDialog(window, "Enter a name for the additional area:", "Area Name", "")
         if dlg.ShowModal() == wx.ID_OK:
-            line_name = dlg.GetValue()
+            area_name = dlg.GetValue()
         else:
             dlg.Destroy()
             return None
         dlg.Destroy()
-        return line_name
+        return area_name
 
     def OnStartTracking(self, event):
         if not self.video_path or not self.coordinates or not self.real_life_coords or not self.detection_area:
@@ -431,19 +437,19 @@ class Application(wx.Frame):
         self.confidence = float(self.confChoice.GetStringSelection())
 
         start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area,
-                       self.additional_lines, self.additional_line_names, self.img_size, self.confidence)
+                       self.additional_areas, self.additional_area_names, self.img_size, self.confidence)
         self.EnableButtons(True)
 
     def EnableButtons(self, state):
         self.selectCoordsButton.Enable(state)
         self.selectDetectionAreaButton.Enable(state)
-        self.addAdditionalLineButton.Enable(state)
+        self.addAdditionalAreaButton.Enable(state)
         self.saveAreasButton.Enable(state)
         self.loadCoordsButton.Enable(state)
         self.startTrackingButton.Enable(state)
         self.selectCoordsButton.Refresh()
         self.selectDetectionAreaButton.Refresh()
-        self.addAdditionalLineButton.Refresh()
+        self.addAdditionalAreaButton.Refresh()
         self.saveAreasButton.Refresh()
         self.loadCoordsButton.Refresh()
         self.startTrackingButton.Refresh()
