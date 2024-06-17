@@ -4,24 +4,26 @@ import json
 import os
 from tracking import start_tracking
 
+
 class Application(wx.Frame):
 
     def __init__(self, *args, **kwargs):
         super(Application, self).__init__(*args, **kwargs)
-        self.InitApp()
-        self.coordinates = []
-        self.real_life_coords = []
-        self.detection_area = []
+        self.InitApp() #Initialize the application UI
+        self.coordinates = [] # Store perspective transform coordinates
+        self.real_life_coords = [] # Store real-world coordinates corresponding to the selected points
+        self.detection_area = [] # Store coordinates of the detection area
         self.additional_areas = []  # Store areas as lists of points
         self.additional_area_names = []  # List to store names of additional areas
-        self.video_path = ""
-        self.frame = None
-        self.scaled_frame = None
-        self.scale_factor_x = 1
-        self.scale_factor_y = 1
-        self.static_bitmap = None
-        self.img_size = 1280  # Default image size
-        self.confidence = 0.5  # Default confidence
+        self.video_path = "" # Path to selected video file
+        self.frame = None # Store current video frame
+        self.scaled_frame = None # Store the scaled version of the current video frame
+        self.scale_factor_x = 1 # X Scaling factor for video display
+        self.scale_factor_y = 1 # Y Scaling factor for video display
+        self.static_bitmap = None # Bitmap for displaying video frames
+        self.img_size = 1280  # Default image size for object detection
+        self.confidence = 0.5  # Default confidence level for object detection
+        self.use_camera = False  # Flag to indicate if camera feed is used
 
     def InitApp(self):
         panel = wx.Panel(self)
@@ -30,23 +32,25 @@ class Application(wx.Frame):
         button_size = (140, 40)
 
         openVideoButton = wx.Button(panel, label='Open Video', pos=(10, 10), size=button_size)
-        selectCoordsButton = wx.Button(panel, label='Select Coordinates', pos=(160, 10), size=button_size)
-        selectDetectionAreaButton = wx.Button(panel, label='Select Detection Area', pos=(310, 10), size=button_size)
-        addAdditionalAreaButton = wx.Button(panel, label='Add Additional Area', pos=(460, 10), size=button_size)
-        saveAreasButton = wx.Button(panel, label='Save Areas', pos=(610, 10), size=button_size)
-        loadCoordsButton = wx.Button(panel, label='Load File', pos=(760, 10), size=button_size)
-        startTrackingButton = wx.Button(panel, label='Start Tracking', pos=(910, 10), size=button_size)
-        quitButton = wx.Button(panel, label='Quit', pos=(1060, 10), size=button_size)
+        openCameraButton = wx.Button(panel, label='Open Camera', pos=(160, 10), size=button_size)
+        selectCoordsButton = wx.Button(panel, label='Select Coordinates', pos=(310, 10), size=button_size)
+        selectDetectionAreaButton = wx.Button(panel, label='Select Detection Area', pos=(460, 10), size=button_size)
+        addAdditionalAreaButton = wx.Button(panel, label='Add Additional Area', pos=(610, 10), size=button_size)
+        saveAreasButton = wx.Button(panel, label='Save Areas', pos=(760, 10), size=button_size)
+        loadCoordsButton = wx.Button(panel, label='Load File', pos=(910, 10), size=button_size)
+        startTrackingButton = wx.Button(panel, label='Start Tracking', pos=(1060, 10), size=button_size)
+        quitButton = wx.Button(panel, label='Quit', pos=(1210, 10), size=button_size)
 
-        imgSizeLabel = wx.StaticText(panel, label="Image Size:", pos=(1210, 15))
-        self.imgSizeChoice = wx.Choice(panel, choices=["320", "640", "1280"], pos=(1280, 10), size=(70, 30))
+        imgSizeLabel = wx.StaticText(panel, label="Image Size:", pos=(1360, 15))
+        self.imgSizeChoice = wx.Choice(panel, choices=["320", "640", "1280"], pos=(1430, 10), size=(70, 30))
         self.imgSizeChoice.SetSelection(2)  # Default to 1280
 
-        confLabel = wx.StaticText(panel, label="Confidence:", pos=(1360, 15))
-        self.confChoice = wx.Choice(panel, choices=["0.3", "0.5", "0.7"], pos=(1440, 10), size=(70, 30))
+        confLabel = wx.StaticText(panel, label="Confidence:", pos=(1500, 15))
+        self.confChoice = wx.Choice(panel, choices=["0.3", "0.5", "0.7"], pos=(1570, 10), size=(70, 30))
         self.confChoice.SetSelection(1)  # Default to 0.5
 
-        openVideoButton.Bind(wx.EVT_BUTTON, self.OnOpen)
+        openVideoButton.Bind(wx.EVT_BUTTON, self.OnOpenVideo)
+        openCameraButton.Bind(wx.EVT_BUTTON, self.OnOpenCamera)
         selectCoordsButton.Bind(wx.EVT_BUTTON, self.OnSelectCoords)
         selectDetectionAreaButton.Bind(wx.EVT_BUTTON, self.OnSelectDetectionArea)
         addAdditionalAreaButton.Bind(wx.EVT_BUTTON, self.OnAddAdditionalArea)
@@ -77,12 +81,15 @@ class Application(wx.Frame):
     def OnQuit(self, event):
         self.Close()
 
-    def OnOpen(self, event):
+    def OnOpenVideo(self, event):
         with wx.FileDialog(self, "Open video file", wildcard="(*.mp4;*.avi;*.mov)|*.mp4;*.avi;*.mov",
                            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
             if fileDialog.ShowModal() == wx.ID_CANCEL:
                 return
             self.video_path = fileDialog.GetPath()
+
+            self.use_camera = False
+
             self.ResetAreas()
             self.LoadVideoFrame()
             self.selectCoordsButton.Enable()
@@ -91,13 +98,35 @@ class Application(wx.Frame):
             self.loadCoordsButton.Enable()
             self.startTrackingButton.Enable()
 
+
+    def OnOpenCamera(self, event):
+        self.video_path = "0"  # Indicate that the camera is used
+        self.use_camera = True  # Set flag to use the camera
+        self.ResetAreas()
+        self.cam = cv2.VideoCapture(0)  # Open the default camera
+        if not self.cam.isOpened():
+            wx.MessageBox('Unable to open camera.', 'Error', wx.OK | wx.ICON_ERROR)
+            return
+        ret, self.frame = self.cam.read()
+        if not ret:
+            wx.MessageBox('Unable to read from camera.', 'Error', wx.OK | wx.ICON_ERROR)
+            self.cam.release()
+            return
+        self.cam.release()
+        self.LoadVideoFrame()  # Load the captured frame
+        self.selectCoordsButton.Enable()
+        self.selectDetectionAreaButton.Enable()
+        self.addAdditionalAreaButton.Enable()
+        self.loadCoordsButton.Enable()
+        self.startTrackingButton.Enable()
+
     def ResetAreas(self):
         """Resets the area data when opening a new video."""
         self.coordinates = []
         self.real_life_coords = []
         self.detection_area = []
-        self.additional_areas = []  # Reset areas
-        self.additional_area_names = []  # Reset area names
+        self.additional_areas = []
+        self.additional_area_names = []
         self.static_bitmap = None
         self.saveAreasButton.Disable()
 
@@ -105,12 +134,13 @@ class Application(wx.Frame):
         if not self.video_path:
             wx.MessageBox('No video path specified.', 'Error', wx.OK | wx.ICON_ERROR)
             return
-        self.cam = cv2.VideoCapture(self.video_path)
-        ret, self.frame = self.cam.read()
-        if not ret:
-            wx.MessageBox('Unable to read video frame.', 'Error', wx.OK | wx.ICON_ERROR)
-        self.cam.release()
 
+        if not self.use_camera:
+            self.cam = cv2.VideoCapture(self.video_path)
+            ret, self.frame = self.cam.read()
+            if not ret:
+                wx.MessageBox('Unable to read video frame.', 'Error', wx.OK | wx.ICON_ERROR)
+            self.cam.release()
         self.AdjustVideoSize()
 
     def AdjustVideoSize(self):
@@ -437,7 +467,7 @@ class Application(wx.Frame):
         self.confidence = float(self.confChoice.GetStringSelection())
 
         start_tracking(self.coordinates, self.real_life_coords, self.video_path, self.detection_area,
-                       self.additional_areas, self.additional_area_names, self.img_size, self.confidence)
+                       self.additional_areas, self.additional_area_names, self.img_size, self.confidence, self.use_camera)
         self.EnableButtons(True)
 
     def EnableButtons(self, state):

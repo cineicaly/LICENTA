@@ -31,8 +31,11 @@ def warpFrame(frame, transformer, target_width, target_height):
     target_size = (int(target_width), int(target_height))
     return cv2.warpPerspective(frame, transformer.m, target_size)
 
-def getVideoInfo(path):
-    cap = cv2.VideoCapture(path)
+def getVideoInfo(path, use_camera=False):
+    if use_camera:
+        cap = cv2.VideoCapture(0)
+    else:
+        cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     return cap, fps
 
@@ -46,7 +49,7 @@ def get_color_for_tracker_id(tracker_id):
     return tuple(np.random.randint(0, 255, size=3).tolist())
 
 def start_tracking(coordinates, real_life_coords, video_path, detection_area, additional_areas, additional_area_names,
-                   img_size=1280, confidence=0.5):
+                   img_size=1280, confidence=0.5, use_camera=False):
     SOURCE = np.array(coordinates)
 
     TARGET = np.array(
@@ -59,7 +62,8 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
     )
     view_transformer = ViewTransformer(source=SOURCE, target=TARGET)
 
-    cap, fps = getVideoInfo(video_path)
+    use_camera = video_path == "0"
+    cap, fps = getVideoInfo(video_path, use_camera)
     od = LoadObjectDetection()
     tracker = LoadTracker()
 
@@ -108,7 +112,7 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
             for bbox_id in bboxes_ids:
                 (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
                 cx = int((x + x2) / 2)
-                cy = int((y + y2) / 2)  # Use the center of the bbox
+                cy = y2  # Use the center bottom side of the bbox
 
                 if object_id not in ema_coords:
                     ema_coords[object_id] = (cx, cy)
@@ -119,9 +123,9 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                     ema_coords[object_id] = (cx, cy)
 
                 # Check if inside the perspective transform area
-                is_inside_perspective = cv2.pointPolygonTest(SOURCE, (cx, cy), False)
-                if is_inside_perspective <= 0:
-                    continue
+                # is_inside_perspective = cv2.pointPolygonTest(SOURCE, (cx, cy), False)
+                # if is_inside_perspective <= 0:
+                #     continue
 
                 # Check if inside the detection area
                 is_inside_detection = cv2.pointPolygonTest(np.array(detection_area), (cx, cy), False)
