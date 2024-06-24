@@ -54,10 +54,10 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
 
     TARGET = np.array(
         [
-            real_life_coords[0],  # Top-left corner (no adjustment needed)
-            [real_life_coords[1][0] - 1, real_life_coords[1][1]],  # Top-right corner
-            [real_life_coords[2][0] - 1, real_life_coords[2][1] - 1],  # Bottom-right corner
-            [real_life_coords[3][0], real_life_coords[3][1] - 1]  # Bottom-left corner
+            real_life_coords[0],
+            [real_life_coords[1][0] - 1, real_life_coords[1][1]],
+            [real_life_coords[2][0] - 1, real_life_coords[2][1] - 1],
+            [real_life_coords[3][0], real_life_coords[3][1] - 1]
         ]
     )
     view_transformer = ViewTransformer(source=SOURCE, target=TARGET)
@@ -101,18 +101,12 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
             if not ret:
                 break
 
-            # Warp the frame for perspective view
-            warped_frame = warpFrame(frame, view_transformer, TARGET[1][0] + 1, TARGET[2][1] + 1)
-            cv2.namedWindow('warped_frame', cv2.WINDOW_NORMAL)
-            cv2.imshow("warped_frame", warped_frame)
-
             bboxes, class_ids, scores = od.detect(frame, imgsz=img_size, conf=confidence, classes=[2, 3, 5, 7])
             bboxes_ids = tracker.update(bboxes, scores, class_ids, frame)
-
             for bbox_id in bboxes_ids:
                 (x, y, x2, y2, object_id, class_id, score) = np.array(bbox_id)
                 cx = int((x + x2) / 2)
-                cy = y2  # Use the center bottom side of the bbox
+                cy = int(y2)
 
                 if object_id not in ema_coords:
                     ema_coords[object_id] = (cx, cy)
@@ -126,7 +120,6 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                 # is_inside_perspective = cv2.pointPolygonTest(SOURCE, (cx, cy), False)
                 # if is_inside_perspective <= 0:
                 #     continue
-
                 # Check if inside the detection area
                 is_inside_detection = cv2.pointPolygonTest(np.array(detection_area), (cx, cy), False)
                 if is_inside_detection <= 0:
@@ -137,15 +130,12 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                 cv2.rectangle(frame, (x, y), (x2, y2), color, 2)
 
                 class_name = od.classes[class_id]
-                label = "{} {:.2f} km/h".format(class_name, speed_by_id.get(object_id, 0))
-                (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 1, 1)
-
                 if object_id not in coordinates_by_id:
                     coordinates_by_id[object_id] = deque(maxlen=int(fps))
                 else:
                     coordinates_by_id[object_id].append((cx, cy))
 
-                if len(coordinates_by_id[object_id]) > fps / 3:
+                if len(coordinates_by_id[object_id]) > fps / 2:
                     start_point = coordinates_by_id[object_id][0]
                     end_point = coordinates_by_id[object_id][-1]
                     transformed_start = view_transformer.transform_points(np.array([start_point]))[0]
@@ -154,17 +144,23 @@ def start_tracking(coordinates, real_life_coords, video_path, detection_area, ad
                     time_elapsed = len(coordinates_by_id[object_id]) / fps
                     speed = (distance / time_elapsed) * 3.6
                     speed_by_id[object_id] = speed
+
+                # Only display the speed if it has been calculated
+                if object_id in speed_by_id:
+                    speed = speed_by_id[object_id]
+                    label = "{} {:.2f} km/h".format(class_name, speed)
+                    (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 3, 2)
                     cv2.rectangle(frame, (x, y), (x + w, y - h - 10), color, -1)
-                    cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 1, (255, 255, 255), 1)
+                    cv2.putText(frame, label, (x, y - 5), cv2.FONT_HERSHEY_PLAIN, 3, (255, 255, 255), 2)
 
                 # Process each additional area
                 for i, area in enumerate(additional_areas):
                     area_points = np.array(area)
-                    if cv2.pointPolygonTest(area_points, (cx, cy), False) >= 0 and object_id not in area_intersections[i]:
+                    if cv2.pointPolygonTest(area_points, (cx, cy), False) >= 0 and object_id not in area_intersections[
+                        i]:
                         area_intersections[i].add(object_id)
                         writer.writerow([additional_area_names[i], frame_count / fps, object_id, class_name,
                                          round(speed_by_id.get(object_id, 0), 2)])
-
             # Draw detection and additional areas
             cv2.polylines(frame, [np.array(detection_area)], True, (0, 0, 225), 4)
             for area in additional_areas:
